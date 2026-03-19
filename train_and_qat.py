@@ -18,7 +18,7 @@ from prettytable import PrettyTable
 from tqdm import tqdm
 
 # TorchAO QAT
-from torchao.quantization import quantize_, Int8DynamicActivationInt4WeightConfig
+from torchao.quantization import quantize_, Int8DynamicActivationIntxWeightConfig, PerGroup
 from torchao.quantization.qat import QATConfig
 
 # Configure Envs
@@ -174,7 +174,7 @@ def run_training_pipeline(model_name, run_type):
             print(
                 "Resuming directly into QAT phase, setting up fake quantize modules BEFORE loading state dict..."
             )
-            base_config = Int8DynamicActivationInt4WeightConfig(group_size=32)
+            base_config = Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(32))
             quantize_(model, QATConfig(base_config, step="prepare"))
             model.to(DEVICE)
 
@@ -185,6 +185,23 @@ def run_training_pipeline(model_name, run_type):
     else:
         if run_type == "spot":
             print("No spot checkpoint found. Starting from scratch.")
+
+    def record_timing(phase, epoch, step, action, duration):
+        csv_path = os.path.join(BASE_OUTPUT_DIR, "timing_log.csv")
+        file_exists = os.path.isfile(csv_path)
+        with open(csv_path, mode="a", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=["model_name", "run_type", "phase", "epoch", "step", "action", "duration"])
+            if not file_exists:
+                writer.writeheader()
+            writer.writerow({
+                "model_name": model_name,
+                "run_type": run_type,
+                "phase": phase,
+                "epoch": epoch,
+                "step": step,
+                "action": action,
+                "duration": duration
+            })
 
     def move_batch(batch, device):
         return {k: v.to(device) for k, v in batch.items()}
@@ -220,6 +237,7 @@ def run_training_pipeline(model_name, run_type):
         torch.save(chkpt, checkpoint_path)
         dt = time.time() - t0
         checkpoint_times.append(dt)
+        record_timing(phase, epoch_idx, step_idx, "checkpoint", dt)
 
     def train_one_epoch(
         model, dataloader, optimizer, scheduler, epoch_idx, phase_name, start_step=0
@@ -240,6 +258,8 @@ def run_training_pipeline(model_name, run_type):
                 if step <= start_step:
                     continue
 
+                step_t0 = time.time()
+
                 batch = move_batch(batch, DEVICE)
                 with torch.autocast(
                     device_type="cuda", dtype=DTYPE, enabled=(DEVICE == "cuda")
@@ -255,6 +275,9 @@ def run_training_pipeline(model_name, run_type):
                     optimizer.step()
                     scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
+
+                step_dt = time.time() - step_t0
+                record_timing(phase_name, epoch_idx, step, "train_step", step_dt)
 
                 pbar.update(1)
                 pbar.set_postfix({"loss": f"{running / (step - start_step):.4f}"})
@@ -286,7 +309,10 @@ def run_training_pipeline(model_name, run_type):
             )
             start_step = 0
 
+            eval_t0 = time.time()
             val_loss, val_ppl = evaluate(model, eval_loader)
+            eval_dt = time.time() - eval_t0
+            record_timing("fp", epoch, 0, "evaluate", eval_dt)
 
             if run_type == "spot":
                 save_spot_checkpoint(model, optimizer, scheduler, epoch + 1, 0, "fp")
@@ -306,7 +332,7 @@ def run_training_pipeline(model_name, run_type):
     if current_phase == "qat":
         if start_epoch == 1:
             print(f"Preparing model {model_name} for QAT...")
-            base_config = Int8DynamicActivationInt4WeightConfig(group_size=32)
+            base_config = Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(32))
             quantize_(model, QATConfig(base_config, step="prepare"))
 
         for epoch in range(start_epoch, NUM_EPOCHS_QAT + 1):
@@ -317,7 +343,10 @@ def run_training_pipeline(model_name, run_type):
             )
             start_step = 0
 
+            eval_t0 = time.time()
             val_loss, val_ppl = evaluate(model, eval_loader)
+            eval_dt = time.time() - eval_t0
+            record_timing("qat", epoch, 0, "evaluate", eval_dt)
 
             if run_type == "spot":
                 save_spot_checkpoint(model, optimizer, scheduler, epoch + 1, 0, "qat")
@@ -334,7 +363,7 @@ def run_training_pipeline(model_name, run_type):
     print(f"Converting QAT model {model_name}...")
     convert_t0 = time.time()
 
-    base_config = Int8DynamicActivationInt4WeightConfig(group_size=32)
+    base_config = Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4, weight_granularity=PerGroup(32))
     quantize_(model, QATConfig(base_config, step="convert"))
 
     model.config.save_pretrained(output_dir)
