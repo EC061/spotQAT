@@ -1,0 +1,47 @@
+{
+"tjnepf1": {
+"instance_data": {
+"NAME": "tjnepf1",
+"ZONE": "us-central1-c",
+"MACHINE_TYPE": "n1-highcpu-16",
+"PREEMPTIBLE": "true"
+},
+"time_in_sec": 2836.621,
+"insert": {
+"endTime": "2019-03-25T12:23:13.052-07:00",
+"id": "4696199543794209939",
+"insertTime": "2019-03-25T12:22:36.614-07:00",
+"kind": "compute#operation",
+"name": "operation-1553541755673-584f0207d9d28-95457698-66cfd314",
+"operationType": "insert",
+"progress": 100,
+"selfLink": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c/operations/operation-1553541755673-584f0207d9d28-95457698-66cfd314",
+"startTime": "2019-03-25T12:22:36.617-07:00",
+"status": "DONE",
+"targetId": "7592324531544691860",
+"targetLink": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c/instances/tjnepf1",
+"user": "kadupitiya@kadupitiya.lk",
+"zone": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c"
+},
+"compute.instances.preempted": {
+"endTime": "2019-03-25T13:09:53.235-07:00",
+"id": "9124290691163523966",
+"insertTime": "2019-03-25T13:09:53.235-07:00",
+"kind": "compute#operation",
+"name": "systemevent-1553544593235-584f0c99f5e89-f67cff7e-c0e27d8d",
+"operationType": "compute.instances.preempted",
+"progress": 100,
+"selfLink": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c/operations/systemevent-1553544593235-584f0c99f5e89-f67cff7e-c0e27d8d",
+"startTime": "2019-03-25T13:09:53.235-07:00",
+"status": "DONE",
+"statusMessage": "Instance was preempted.",
+"targetId": "7592324531544691860",
+"targetLink": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c/instances/tjnepf1",
+"user": "system",
+"zone": "https://www.googleapis.com/compute/v1/projects/first-220321/zones/us-central1-c"
+},
+"day_of_week": "Monday",
+"hr_of_day": 13,
+"idle_vs_nonidle": "non-idle"
+}
+}

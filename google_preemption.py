@@ -11,11 +11,14 @@ except ImportError:
     print("Scipy is not installed. Please run `uv add scipy` or `pip install scipy`.")
     sys.exit(1)
 
+
+# Preemption based on Prateek paper in references/preemption/paper.txt
+
 def cdf_model(t, A, tau1, tau2, b):
     # F(t) = A * (1 - e^{-t/t1} + e^{(t-b)/t2})
     return A * (1 - np.exp(-t/tau1) + np.exp((t-b)/tau2))
 
-def fit_and_sample_lifetime(data_path="preemption/goog-preemption-data/data/data.json"):
+def fit_and_sample_lifetime(data_path="data/gcp/data.json"):
     data_path = os.path.join(os.path.dirname(__file__), data_path)
     
     with open(data_path, "r") as f:
