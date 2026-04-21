@@ -3,9 +3,6 @@ import os
 import csv
 import time
 import statistics
-import io
-import multiprocessing as mp
-import queue
 
 # Restrict visible GPUs before importing torch/CUDA-aware libraries.
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
@@ -34,7 +31,9 @@ from torchao.quantization.qat import QATConfig
 # -----------------------------
 MODELS = [
     "meta-llama/Llama-3.2-1B",
-    "meta-llama/Llama-3.2-3B",
+    "facebook/opt-125m",
+    "facebook/opt-350m",
+    "facebook/opt-1.3b",
 ]
 
 DATASET_NAME = "wikitext"
@@ -74,55 +73,9 @@ def _to_cpu_state_dict(state):
             out[k] = v
     return out
 
-
-def _async_checkpoint_worker(task_queue, result_queue):
-    while True:
-        item = task_queue.get()
-        if item is None:
-            break
-        chkpt_bytes, target_path = item
-        t0 = time.time()
-        tmp_path = target_path + ".tmp"
-        with open(tmp_path, "wb") as f:
-            f.write(chkpt_bytes)
-        os.replace(tmp_path, target_path)
-        result_queue.put(time.time() - t0)
-
-
-class AsyncCheckpointSaver:
-    def __init__(self, checkpoint_path):
-        self.checkpoint_path = checkpoint_path
-        ctx = mp.get_context("spawn")
-        self.task_queue = ctx.Queue(maxsize=2)
-        self.result_queue = ctx.Queue()
-        self.proc = ctx.Process(
-            target=_async_checkpoint_worker,
-            args=(self.task_queue, self.result_queue),
-            daemon=True,
-        )
-        self.proc.start()
-
-    def save(self, chkpt):
-        self.task_queue.put((chkpt, self.checkpoint_path))
-
-    def drain_save_times(self):
-        times = []
-        while True:
-            try:
-                times.append(self.result_queue.get_nowait())
-            except queue.Empty:
-                break
-        return times
-
-    def close(self):
-        self.task_queue.put(None)
-        self.proc.join()
-        return self.drain_save_times()
-
-
 def run_training_pipeline(model_name, run_type):
     """
-    run_type: "spot", "spot_async", or "baseline"
+    run_type: "spot" or "baseline"
     Returns timing statistics for the run.
     """
     print(f"\\n{'=' * 50}")
@@ -142,8 +95,6 @@ def run_training_pipeline(model_name, run_type):
 
     if run_type == "spot":
         suffix = "_spot"
-    elif run_type == "spot_async":
-        suffix = "_spot_async"
     else:
         suffix = "_baseline"
     output_dir = os.path.join(BASE_OUTPUT_DIR, model_short_name + suffix)
@@ -231,7 +182,7 @@ def run_training_pipeline(model_name, run_type):
     current_phase = "fp"
     checkpoint_path = os.path.join(checkpoint_dir, "latest_spot_checkpoint.pt")
 
-    if run_type in {"spot", "spot_async"} and os.path.exists(checkpoint_path):
+    if run_type == "spot" and os.path.exists(checkpoint_path):
         print(
             f"Found spot checkpoint at {checkpoint_path} for {model_name}. Resuming..."
         )
@@ -269,7 +220,7 @@ def run_training_pipeline(model_name, run_type):
             optimizer.load_state_dict(chkpt["optimizer_state_dict"])
             scheduler.load_state_dict(chkpt["scheduler_state_dict"])
     else:
-        if run_type in {"spot", "spot_async"}:
+        if run_type == "spot":
             print("No spot checkpoint found. Starting from scratch.")
 
     def record_timing(phase, epoch, step, action, duration):
@@ -309,8 +260,6 @@ def run_training_pipeline(model_name, run_type):
 
     epoch_times = []
     checkpoint_times = []
-    checkpoint_write_times = []
-    async_saver = AsyncCheckpointSaver(checkpoint_path) if run_type == "spot_async" else None
 
     def save_spot_checkpoint(model, optimizer, scheduler, epoch_idx, step_idx, phase):
         t0 = time.time()
@@ -322,15 +271,8 @@ def run_training_pipeline(model_name, run_type):
             "optimizer_state_dict": _to_cpu_state_dict(optimizer.state_dict()),
             "scheduler_state_dict": _to_cpu_state_dict(scheduler.state_dict()),
         }
-        if run_type == "spot_async":
-            buf = io.BytesIO()
-            torch.save(chkpt, buf)
-            async_saver.save(buf.getvalue())
-            checkpoint_write_times.extend(async_saver.drain_save_times())
-            action = "checkpoint_submit"
-        else:
-            torch.save(chkpt, checkpoint_path)
-            action = "checkpoint"
+        torch.save(chkpt, checkpoint_path)
+        action = "checkpoint"
         dt = time.time() - t0
         checkpoint_times.append(dt)
         record_timing(phase, epoch_idx, step_idx, action, dt)
@@ -378,7 +320,7 @@ def run_training_pipeline(model_name, run_type):
                 pbar.update(1)
                 pbar.set_postfix({"loss": f"{running / (step - start_step):.4f}"})
 
-                if run_type in {"spot", "spot_async"}:
+                if run_type == "spot":
                     if (SAVE_EVERY_N_STEPS > 0 and step % SAVE_EVERY_N_STEPS == 0) or (
                         SAVE_EVERY_N_SECONDS > 0
                         and time.time() - last_save_time >= SAVE_EVERY_N_SECONDS
@@ -410,7 +352,7 @@ def run_training_pipeline(model_name, run_type):
             eval_dt = time.time() - eval_t0
             record_timing("fp", epoch, 0, "evaluate", eval_dt)
 
-            if run_type in {"spot", "spot_async"}:
+            if run_type == "spot":
                 save_spot_checkpoint(model, optimizer, scheduler, epoch + 1, 0, "fp")
 
             total_epoch_time = time.time() - epoch_start_time
@@ -444,7 +386,7 @@ def run_training_pipeline(model_name, run_type):
             eval_dt = time.time() - eval_t0
             record_timing("qat", epoch, 0, "evaluate", eval_dt)
 
-            if run_type in {"spot", "spot_async"}:
+            if run_type == "spot":
                 save_spot_checkpoint(model, optimizer, scheduler, epoch + 1, 0, "qat")
 
             total_epoch_time = time.time() - epoch_start_time
@@ -482,16 +424,12 @@ def run_training_pipeline(model_name, run_type):
     gc.collect()
     torch.cuda.empty_cache()
 
-    if async_saver is not None:
-        checkpoint_write_times.extend(async_saver.close())
-
     return {
         "model": model_name,
         "run_type": run_type,
         "total_time": total_time,
         "epoch_times": epoch_times,
         "checkpoint_times": checkpoint_times,
-        "checkpoint_write_times": checkpoint_write_times,
         "convert_time": convert_time,
     }
 
@@ -529,9 +467,6 @@ def print_statistics(results):
             )
         else:
             cp_avg = cp_std = "N/A"
-        cp_write_times = r.get("checkpoint_write_times", [])
-        cpw_avg = f"{statistics.mean(cp_write_times):.2f}" if len(cp_write_times) > 0 else "N/A"
-
         t_conv = f"{r['convert_time']:.2f}"
 
         table.add_row(
@@ -546,11 +481,6 @@ def print_statistics(results):
                 t_conv,
             ]
         )
-        if r["run_type"] == "spot_async":
-            print(
-                f"[{r['model'].split('/')[-1]} | spot_async] avg background checkpoint write time: {cpw_avg}s"
-            )
-
     print("\\n" + str(table) + "\\n")
 
 
@@ -563,9 +493,6 @@ def main():
     for model_name in MODELS:
         res_spot_sync = run_training_pipeline(model_name, "spot")
         results.append(res_spot_sync)
-
-        res_spot_async = run_training_pipeline(model_name, "spot_async")
-        results.append(res_spot_async)
 
         res_base = run_training_pipeline(model_name, "baseline")
         results.append(res_base)
