@@ -8,7 +8,7 @@ import multiprocessing as mp
 import queue
 
 # Restrict visible GPUs before importing torch/CUDA-aware libraries.
-os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 
 import torch
@@ -34,7 +34,7 @@ from torchao.quantization.qat import QATConfig
 # -----------------------------
 MODELS = [
     "meta-llama/Llama-3.2-1B",
-    # "meta-llama/Llama-3.2-3B",
+    "meta-llama/Llama-3.2-3B",
 ]
 
 DATASET_NAME = "wikitext"

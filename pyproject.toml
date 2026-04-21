@@ -10,6 +10,7 @@ dependencies = [
     "torchao",
     "transformers",
     "bitsandbytes",
+    "prettytable",
 ]
 
 [tool.uv]
